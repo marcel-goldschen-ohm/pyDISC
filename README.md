@@ -2,6 +2,11 @@
 Time series jumps idealization with DISC
 
 ## Install
+As of Dec 18, 2024, requires a slightly older Python version.
+```shell
+conda create -n pyDISC-env "python<3.12"
+conda activate pyDISC-env
+```
 Requires a PyQt package. Should work with PySide6, PyQt6, or PyQt5.
 ```shell
 pip install PySide6
