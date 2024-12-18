@@ -15,7 +15,7 @@ import zarr
 
 from qtpy.QtCore import Qt, QSize
 from qtpy.QtGui import QColor
-from qtpy.QtWidgets import QSplitter, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QSizePolicy, QComboBox, QCheckBox, QToolBar, QToolButton, QMenu, QWidgetAction, QProgressDialog, QApplication, QPushButton, QFileDialog
+from qtpy.QtWidgets import QSplitter, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QSizePolicy, QComboBox, QCheckBox, QToolBar, QToolButton, QMenu, QWidgetAction, QProgressDialog, QApplication, QPushButton, QFileDialog, QAction
 import pyqtgraph as pg
 import qtawesome as qta
 
@@ -162,7 +162,8 @@ class DISCO(QWidget):
         self._trace_selector.setPrefix("Trace ")
         self._trace_selector.setSuffix(" of 0")
         self._trace_selector.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-        self._trace_selector.valueChanged.connect(self.replot)
+        self._trace_selector.valueChanged.connect(lambda value: self.set_trace(value - 1))
+        self._last_trace_index = None
 
         # buttons
         self._load_data_button = QToolButton()
@@ -360,9 +361,14 @@ class DISCO(QWidget):
         self._hmm_optimization_button.setMenu(self._hmm_contols_menu)
 
         # tags
-        # self._tags_icon = qta.icon('fa.tag', opacity=0.75)
+        self._tags_icon_action = QAction()
+        self._tags_icon_action.setIcon(qta.icon('fa.tag', opacity=0.75))
         self._tags_edit = QLineEdit()
         self._tags_edit.textEdited.connect(self._on_tags_edited)
+        self._tags_filter_icon_action = QAction()
+        self._tags_filter_icon_action.setIcon(qta.icon('mdi6.filter-multiple-outline', opacity=0.75))
+        self._tags_filter_edit = QLineEdit()
+        self._tags_filter_edit.textEdited.connect(self._on_tags_filter_edited)
 
         # layout
         self._toolbar = QToolBar(orientation=Qt.Orientation.Horizontal)
@@ -380,8 +386,10 @@ class DISCO(QWidget):
         self._toolbar.addWidget(self._remove_level_button)
         self._toolbar.addWidget(self._merge_nearest_levels_button)
         self._toolbar.addWidget(self._hmm_optimization_button)
-        # self._toolbar.addWidget(self._tags_icon)
+        self._toolbar.addAction(self._tags_icon_action)
         self._toolbar.addWidget(self._tags_edit)
+        self._toolbar.addAction(self._tags_filter_icon_action)
+        self._toolbar.addWidget(self._tags_filter_edit)
         self._toolbar.setIconSize(QSize(24, 24))
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -626,12 +634,64 @@ class DISCO(QWidget):
 
         progress.close()
     
+    def set_trace(self, trace_index: int):
+        if not self._traces:
+            return
+
+        if self._is_tags_filter_enabled():
+            n_traces = len(self._traces)
+            filter_tags = [tag.strip() for tag in self._tags_filter_edit.text().split(",")]
+            foundit = False
+            if (self._last_trace_index is None) or (self._last_trace_index <= trace_index):
+                # check forward
+                for i in range(trace_index, n_traces):
+                    trace_tags = [tag.strip() for tag in self._traces[i].tags.split(",")]
+                    if any(tag in trace_tags for tag in filter_tags):
+                        trace_index = i
+                        foundit = True
+                        break
+                if not foundit:
+                    # check backward
+                    for i in range(trace_index, -1, -1):
+                        trace_tags = [tag.strip() for tag in self._traces[i].tags.split(",")]
+                        if any(tag in trace_tags for tag in filter_tags):
+                            trace_index = i
+                            foundit = True
+                            break
+            else:
+                # check backward
+                for i in range(trace_index, -1, -1):
+                    trace_tags = [tag.strip() for tag in self._traces[i].tags.split(",")]
+                    if any(tag in trace_tags for tag in filter_tags):
+                        trace_index = i
+                        foundit = True
+                        break
+                if not foundit:
+                    # check forward
+                    for i in range(trace_index, n_traces):
+                        trace_tags = [tag.strip() for tag in self._traces[i].tags.split(",")]
+                        if any(tag in trace_tags for tag in filter_tags):
+                            trace_index = i
+                            foundit = True
+                            break
+        
+        self._last_trace_index = trace_index
+
+        if self._trace_selector.value() != trace_index + 1:
+            self._trace_selector.blockSignals(True)
+            self._trace_selector.setValue(trace_index + 1)
+            self._trace_selector.blockSignals(False)
+        
+        self.replot()
+    
     def replot(self):
         self._trace_plot.clear()
         self._criterion_plot.clear()
         if not self._traces:
             return
-        trace = self._traces[self._trace_selector.value() - 1]
+        
+        trace_index = self._trace_selector.value() - 1
+        trace = self._traces[trace_index]
         
         if trace.data is not None:
             self._trace_plot.plot(trace.data, pen=pg.mkPen(QColor.fromRgb(0, 114, 189), width=1))
@@ -668,7 +728,7 @@ class DISCO(QWidget):
             color = QColor.fromRgb(217,  83,  25)
             self._criterion_plot.plot([n_idealized_levels], [trace.idealized_metric], pen=pg.mkPen(color, width=1), symbol='o', symbolPen=pg.mkPen(color, width=1), symbolBrush=color)
         
-        self._criterion_plot.autoRange()
+        # self._criterion_plot.autoRange()
 
         self._tags_edit.setText(trace.tags)
     
@@ -700,6 +760,12 @@ class DISCO(QWidget):
             return
         trace = self._traces[self._trace_selector.value() - 1]
         trace.tags = self._tags_edit.text()
+    
+    def _on_tags_filter_edited(self):
+        pass
+
+    def _is_tags_filter_enabled(self) -> bool:
+        return self._tags_filter_edit.text().strip() != ""
 
 
 class SegmentationTreeNode:
