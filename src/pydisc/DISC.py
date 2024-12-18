@@ -27,6 +27,9 @@ class DISC_Sequence:
         # the time series trace
         self.data: np.ndarray = data
 
+        # metadata tags
+        self.tags: str = ''
+
         # for comparison to known simulated noiseless data
         self.noiseless_data: np.ndarray = None
 
@@ -356,6 +359,11 @@ class DISCO(QWidget):
         self._hmm_optimization_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._hmm_optimization_button.setMenu(self._hmm_contols_menu)
 
+        # tags
+        # self._tags_icon = qta.icon('fa.tag', opacity=0.75)
+        self._tags_edit = QLineEdit()
+        self._tags_edit.textEdited.connect(self._on_tags_edited)
+
         # layout
         self._toolbar = QToolBar(orientation=Qt.Orientation.Horizontal)
         self._toolbar.addWidget(self._load_data_button)
@@ -372,6 +380,8 @@ class DISCO(QWidget):
         self._toolbar.addWidget(self._remove_level_button)
         self._toolbar.addWidget(self._merge_nearest_levels_button)
         self._toolbar.addWidget(self._hmm_optimization_button)
+        # self._toolbar.addWidget(self._tags_icon)
+        self._toolbar.addWidget(self._tags_edit)
         self._toolbar.setIconSize(QSize(24, 24))
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -422,6 +432,7 @@ class DISCO(QWidget):
             trace = DISC_Sequence(None)
             for arrayname, array in group.arrays():
                 setattr(trace, arrayname, array[:])
+            trace.tags = group.attrs['tags']
             traces.append(trace)
         self.data = traces
 
@@ -438,6 +449,7 @@ class DISCO(QWidget):
                 group.create_dataset('idealized_data', data=trace.idealized_data)
             if trace.noiseless_data is not None:
                 group.create_dataset('noiseless_data', data=trace.noiseless_data)
+            group.attrs['tags'] = trace.tags
 
     def simulate_data(self):
         try:
@@ -657,6 +669,8 @@ class DISCO(QWidget):
             self._criterion_plot.plot([n_idealized_levels], [trace.idealized_metric], pen=pg.mkPen(color, width=1), symbol='o', symbolPen=pg.mkPen(color, width=1), symbolBrush=color)
         
         self._criterion_plot.autoRange()
+
+        self._tags_edit.setText(trace.tags)
     
     def _set_to_fastest_settings(self):
         self._auto_criterion_toggle.setChecked(False)
@@ -680,6 +694,12 @@ class DISCO(QWidget):
     def _on_hmm_algorithm_changed(self):
         self._final_baum_welch_optimization_toggle.setEnabled(self._hmm_algorithm_selector.currentText() != "Baum-Welch")
         self._num_viterbi_repeats.setEnabled(self._hmm_algorithm_selector.currentText() == "Viterbi")
+    
+    def _on_tags_edited(self):
+        if not self._traces:
+            return
+        trace = self._traces[self._trace_selector.value() - 1]
+        trace.tags = self._tags_edit.text()
 
 
 class SegmentationTreeNode:
