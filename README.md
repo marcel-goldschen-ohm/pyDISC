@@ -15,3 +15,17 @@ Install latest development version:
 ```shell
 pip install pyDISC@git+https://github.com/marcel-goldschen-ohm/pyDISC
 ```
+
+## Use
+```python
+from qtpy.QtWidgets import QApplication
+from pydisc import DISCO
+app = QApplication()
+widget = DISCO()
+
+# input list of numpy arrays or DISC_Sequence objects
+widget.data = ...
+
+widget.show()
+app.exec()
+```
