@@ -89,6 +89,7 @@ class DISC_Sequence:
                 agg_index = self.intermediate_results['agg_index']
                 self.n_required_levels = agg_index + 2
             except:
+                self.n_idealized_levels = len(np.unique(self.idealized_data))
                 self.n_required_levels = self.n_idealized_levels + 1
         self.run(auto=False, return_intermediate_results=False, verbose=verbose)
     
@@ -102,8 +103,10 @@ class DISC_Sequence:
                 agg_index = self.intermediate_results['agg_index']
                 n_required_levels = agg_index
                 if n_required_levels < 1:
+                    self.n_idealized_levels = len(np.unique(self.idealized_data))
                     n_required_levels = self.n_idealized_levels - 1
             except:
+                self.n_idealized_levels = len(np.unique(self.idealized_data))
                 n_required_levels = self.n_idealized_levels - 1
         if n_required_levels < 1:
             return
@@ -113,6 +116,7 @@ class DISC_Sequence:
     def merge_nearest_levels(self):
         if self.idealized_data is None:
             return
+        self.n_idealized_levels = len(np.unique(self.idealized_data))
         if self.n_idealized_levels < 2:
             return
         merge_nearest_levels(self.data, self.idealized_data)
@@ -440,7 +444,8 @@ class DISCO(QWidget):
             trace = DISC_Sequence(None)
             for arrayname, array in group.arrays():
                 setattr(trace, arrayname, array[:])
-            trace.tags = group.attrs['tags']
+            if 'tags' in group.attrs:
+                trace.tags = group.attrs['tags']
             traces.append(trace)
         self.data = traces
 
@@ -457,7 +462,8 @@ class DISCO(QWidget):
                 group.create_dataset('idealized_data', data=trace.idealized_data)
             if trace.noiseless_data is not None:
                 group.create_dataset('noiseless_data', data=trace.noiseless_data)
-            group.attrs['tags'] = trace.tags
+            if trace.tags:
+                group.attrs['tags'] = trace.tags
 
     def simulate_data(self):
         try:
