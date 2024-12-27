@@ -15,7 +15,7 @@ import zarr
 
 from qtpy.QtCore import Qt, QSize
 from qtpy.QtGui import QColor
-from qtpy.QtWidgets import QSplitter, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QSizePolicy, QComboBox, QCheckBox, QToolBar, QToolButton, QMenu, QWidgetAction, QProgressDialog, QApplication, QPushButton, QFileDialog, QAction
+from qtpy.QtWidgets import QSplitter, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QSizePolicy, QComboBox, QCheckBox, QToolBar, QToolButton, QMenu, QWidgetAction, QProgressDialog, QApplication, QPushButton, QFileDialog, QAction, QInputDialog
 import pyqtgraph as pg
 import qtawesome as qta
 
@@ -51,11 +51,18 @@ class DISC_Sequence:
         
         # intermediate results
         self.intermediate_results: dict = None
+
+        # mask array
+        self.mask: np.ndarray = None
     
     def run(self, auto: bool = False, return_intermediate_results: bool = False, verbose: bool = False):
         func = auto_DISC if auto else run_DISC
+        if self.mask is None:
+            data = self.data
+        else:
+            data = self.data[~self.mask]
         results = func(
-            self.data,
+            data,
             div_criterion = self.div_criterion,
             agg_criterion = self.agg_criterion,
             n_required_levels = self.n_required_levels,
@@ -74,10 +81,16 @@ class DISC_Sequence:
             self.div_criterion = criterion
             self.agg_criterion = criterion
         if return_intermediate_results:
-            self.idealized_data, self.idealized_metric, self.intermediate_results = results
+            idealized_data, self.idealized_metric, self.intermediate_results = results
         else:
-            self.idealized_data, self.idealized_metric = results
-        self.n_idealized_levels = len(np.unique(self.idealized_data))
+            idealized_data, self.idealized_metric = results
+        if self.mask is None:
+            self.idealized_data = idealized_data
+        else:
+            self.idealized_data = np.empty(self.data.shape)
+            self.idealized_data[:] = np.nan
+            self.idealized_data[~self.mask] = idealized_data
+        self.n_idealized_levels = len(np.unique(idealized_data))
     
     def add_level(self, verbose: bool = False):
         if self.idealized_data is None:
@@ -116,18 +129,60 @@ class DISC_Sequence:
     def merge_nearest_levels(self):
         if self.idealized_data is None:
             return
-        self.n_idealized_levels = len(np.unique(self.idealized_data))
+        if self.mask is None:
+            data = self.data
+            idealized_data = self.idealized_data
+        else:
+            data = self.data[~self.mask]
+            idealized_data = self.idealized_data[~self.mask]
+        self.n_idealized_levels = len(np.unique(idealized_data))
         if self.n_idealized_levels < 2:
             return
-        merge_nearest_levels(self.data, self.idealized_data)
-        self.n_idealized_levels = len(np.unique(self.idealized_data))
-        self.idealized_metric = information_criterion(self.data, self.idealized_data, self.agg_criterion)
+        merge_nearest_levels(data, idealized_data)
+        if self.mask is None:
+            self.idealized_data = idealized_data
+        else:
+            self.idealized_data = np.empty(self.data.shape)
+            self.idealized_data[:] = np.nan
+            self.idealized_data[~self.mask] = idealized_data
+        self.n_idealized_levels = len(np.unique(idealized_data))
+        self.idealized_metric = information_criterion(data, idealized_data, self.agg_criterion)
     
     def baum_welch_optimization(self, level_means: np.ndarray = None, level_stdevs: np.ndarray = None, optimize_level_means=False, optimize_level_stdevs=False):
-        self.idealized_data, hmm = hmm_idealization_refinement(self.data, self.idealized_data, level_means, level_stdevs, optimize_level_means=optimize_level_means, optimize_level_stdevs=optimize_level_stdevs, algorithm='baum-welch')
+        if self.mask is None:
+            data = self.data
+            idealized_data = self.idealized_data
+        else:
+            data = self.data[~self.mask]
+            idealized_data = self.idealized_data[~self.mask]
+        idealized_data, hmm = hmm_idealization_refinement(data, idealized_data, level_means, level_stdevs, optimize_level_means=optimize_level_means, optimize_level_stdevs=optimize_level_stdevs, algorithm='baum-welch')
+        if self.mask is None:
+            self.idealized_data = idealized_data
+        else:
+            self.idealized_data = np.empty(self.data.shape)
+            self.idealized_data[:] = np.nan
+            self.idealized_data[~self.mask] = idealized_data
         if not isinstance(self.intermediate_results, dict):
             self.intermediate_results = {}
         self.intermediate_results['final_hmm'] = hmm
+    
+    def get_mask_str(self) -> str:
+        if self.mask is None:
+            return ''
+        starts, stops = find_piecewise_constant_segments(self.mask)
+        ranges = [f'{start}:{stop}' for start, stop in zip(starts, stops)]
+        return ', '.join(ranges)
+
+    def set_mask_str(self, mask_str: str):
+        if mask_str == '':
+            self.mask = None
+            return
+        self.mask = np.empty(self.data.shape, dtype=bool)
+        self.mask[:] = False
+        ranges = mask_str.split(',')
+        for rng in ranges:
+            start, stop = rng.split(':')
+            self.mask[int(start):int(stop)] = True
 
 
 class DISCO(QWidget):
@@ -364,14 +419,24 @@ class DISCO(QWidget):
         self._hmm_optimization_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._hmm_optimization_button.setMenu(self._hmm_contols_menu)
 
+        # mask
+        self._mask_button = QToolButton()
+        self._mask_button.setIcon(qta.icon('fa5s.mask', opacity=0.75))
+        self._mask_button.setToolTip("Edit mask for selected trace")
+        self._mask_button.pressed.connect(self._edit_mask_for_selected_trace)
+
         # tags
         self._tags_icon_action = QAction()
         self._tags_icon_action.setIcon(qta.icon('fa.tag', opacity=0.75))
+        self._tags_icon_action.setToolTip("Tags (comma-separated)")
         self._tags_edit = QLineEdit()
+        self._tags_edit.setToolTip("Tags (comma-separated)")
         self._tags_edit.textEdited.connect(self._on_tags_edited)
         self._tags_filter_icon_action = QAction()
         self._tags_filter_icon_action.setIcon(qta.icon('mdi6.filter-multiple-outline', opacity=0.75))
+        self._tags_filter_icon_action.setToolTip("Tags filter (any of comma-separated)")
         self._tags_filter_edit = QLineEdit()
+        self._tags_filter_edit.setToolTip("Tags filter (any of comma-separated)")
         self._tags_filter_edit.textEdited.connect(self._on_tags_filter_edited)
 
         # layout
@@ -390,6 +455,9 @@ class DISCO(QWidget):
         self._toolbar.addWidget(self._remove_level_button)
         self._toolbar.addWidget(self._merge_nearest_levels_button)
         self._toolbar.addWidget(self._hmm_optimization_button)
+        self._toolbar.addSeparator()
+        self._toolbar.addWidget(self._mask_button)
+        self._toolbar.addSeparator()
         self._toolbar.addAction(self._tags_icon_action)
         self._toolbar.addWidget(self._tags_edit)
         self._toolbar.addAction(self._tags_filter_icon_action)
@@ -700,7 +768,12 @@ class DISCO(QWidget):
         trace = self._traces[trace_index]
         
         if trace.data is not None:
-            self._trace_plot.plot(trace.data, pen=pg.mkPen(QColor.fromRgb(0, 114, 189), width=1))
+            if trace.mask is None:
+                data = trace.data
+            else:
+                data = trace.data.copy()
+                data[trace.mask] = np.nan
+            self._trace_plot.plot(data, pen=pg.mkPen(QColor.fromRgb(0, 114, 189), width=1))
         
         # # for debugging
         # if isinstance(trace.intermediate_results, dict):
@@ -709,7 +782,12 @@ class DISCO(QWidget):
         #         self._trace_plot.plot(div_idealized_data, pen=pg.mkPen(QColor.fromRgb(0, 155, 255), width=1))
         
         if trace.idealized_data is not None:
-            self._trace_plot.plot(trace.idealized_data, pen=pg.mkPen(QColor.fromRgb(217,  83,  25), width=2))
+            if trace.mask is None:
+                idealized_data = trace.idealized_data
+            else:
+                idealized_data = trace.idealized_data.copy()
+                idealized_data[trace.mask] = np.nan
+            self._trace_plot.plot(idealized_data, pen=pg.mkPen(QColor.fromRgb(217,  83,  25), width=2))
         
         if isinstance(trace.intermediate_results, dict):
             agg_levels = trace.intermediate_results.get('agg_levels', None)
@@ -730,7 +808,7 @@ class DISCO(QWidget):
             self._criterion_plot.getAxis('left').setLabel('Criterion')
         
         if (trace.idealized_data is not None) and (trace.idealized_metric is not None):
-            n_idealized_levels = len(np.unique(trace.idealized_data))
+            n_idealized_levels = len(np.unique(idealized_data))
             color = QColor.fromRgb(217,  83,  25)
             self._criterion_plot.plot([n_idealized_levels], [trace.idealized_metric], pen=pg.mkPen(color, width=1), symbol='o', symbolPen=pg.mkPen(color, width=1), symbolBrush=color)
         
@@ -760,6 +838,15 @@ class DISCO(QWidget):
     def _on_hmm_algorithm_changed(self):
         self._final_baum_welch_optimization_toggle.setEnabled(self._hmm_algorithm_selector.currentText() != "Baum-Welch")
         self._num_viterbi_repeats.setEnabled(self._hmm_algorithm_selector.currentText() == "Viterbi")
+    
+    def _edit_mask_for_selected_trace(self):
+        trace_index = self._trace_selector.value() - 1
+        trace = self._traces[trace_index]
+        mask_str = trace.get_mask_str()
+        mask_str, ok = QInputDialog.getText(self, "Edit mask", "Mask (comma-separated start:stop ranges)", text=mask_str)
+        if ok:
+            trace.set_mask_str(mask_str)
+            self.replot()
     
     def _on_tags_edited(self):
         if not self._traces:
