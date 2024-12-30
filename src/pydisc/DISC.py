@@ -425,6 +425,11 @@ class DISCO(QWidget):
         self._mask_button.setToolTip("Edit mask for selected trace")
         self._mask_button.pressed.connect(self._edit_mask_for_selected_trace)
 
+        self._mask_checkbox = QCheckBox()
+        self._mask_checkbox.setChecked(True)
+        self._mask_checkbox.setToolTip("Enable mask")
+        self._mask_checkbox.stateChanged.connect(lambda state: self.replot())
+
         # tags
         self._tags_icon_action = QAction()
         self._tags_icon_action.setIcon(qta.icon('fa.tag', opacity=0.75))
@@ -456,6 +461,7 @@ class DISCO(QWidget):
         self._toolbar.addWidget(self._merge_nearest_levels_button)
         self._toolbar.addWidget(self._hmm_optimization_button)
         self._toolbar.addSeparator()
+        self._toolbar.addWidget(self._mask_checkbox)
         self._toolbar.addWidget(self._mask_button)
         self._toolbar.addSeparator()
         self._toolbar.addAction(self._tags_icon_action)
@@ -768,7 +774,7 @@ class DISCO(QWidget):
         trace = self._traces[trace_index]
         
         if trace.data is not None:
-            if trace.mask is None:
+            if trace.mask is None or not self._mask_checkbox.isChecked():
                 data = trace.data
             else:
                 data = trace.data.copy()
@@ -782,12 +788,7 @@ class DISCO(QWidget):
         #         self._trace_plot.plot(div_idealized_data, pen=pg.mkPen(QColor.fromRgb(0, 155, 255), width=1))
         
         if trace.idealized_data is not None:
-            if trace.mask is None:
-                idealized_data = trace.idealized_data
-            else:
-                idealized_data = trace.idealized_data.copy()
-                idealized_data[trace.mask] = np.nan
-            self._trace_plot.plot(idealized_data, pen=pg.mkPen(QColor.fromRgb(217,  83,  25), width=2))
+            self._trace_plot.plot(trace.idealized_data, pen=pg.mkPen(QColor.fromRgb(217,  83,  25), width=2))
         
         if isinstance(trace.intermediate_results, dict):
             agg_levels = trace.intermediate_results.get('agg_levels', None)
@@ -808,7 +809,7 @@ class DISCO(QWidget):
             self._criterion_plot.getAxis('left').setLabel('Criterion')
         
         if (trace.idealized_data is not None) and (trace.idealized_metric is not None):
-            n_idealized_levels = len(np.unique(idealized_data))
+            n_idealized_levels = len(np.unique(trace.idealized_data[~np.isnan(trace.idealized_data)]))
             color = QColor.fromRgb(217,  83,  25)
             self._criterion_plot.plot([n_idealized_levels], [trace.idealized_metric], pen=pg.mkPen(color, width=1), symbol='o', symbolPen=pg.mkPen(color, width=1), symbolBrush=color)
         
