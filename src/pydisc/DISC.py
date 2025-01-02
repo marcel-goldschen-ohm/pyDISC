@@ -509,11 +509,13 @@ class DISCO(QWidget):
     
     def load_zarr(self, filepath=''):
         if filepath == '':
-            filepath = QFileDialog.getExistingDirectory(self, 'Open from Zarr store...')
+            filepath, _ = QFileDialog.getOpenFileName(self, 'Open from Zarr Zip store...', filter='Zarr Zip store (*.zip)')
+            # filepath = QFileDialog.getExistingDirectory(self, 'Open from Zarr store...')
             if filepath == '':
                 return
         traces = []
-        root = zarr.open_group(filepath, mode='r')
+        store = zarr.ZipStore(filepath, mode='r')
+        root = zarr.open_group(store, mode='r')
         for groupname, group in root.groups():
             trace = DISC_Sequence(None)
             for arrayname, array in group.arrays():
@@ -525,10 +527,15 @@ class DISCO(QWidget):
 
     def save_zarr(self, filepath=''):
         if filepath == '':
-            filepath, _ = QFileDialog.getSaveFileName(self, 'Save to Zarr store...')
+            filepath, _ = QFileDialog.getSaveFileName(self, 'Save to Zarr Zip store...')
             if filepath == '':
                 return
-        root = zarr.open_group(filepath, mode='w')
+        if not filepath.endswith('.zip'):
+            if not filepath.endswith('.zarr'):
+                filepath += '.zarr'
+            filepath += '.zip'
+        store = zarr.ZipStore(filepath, mode='w')
+        root = zarr.open_group(store, mode='w')
         for i, trace in enumerate(self._traces):
             group = root.create_group(f"trace.{i}")
             group.create_dataset('data', data=trace.data)
@@ -536,6 +543,8 @@ class DISCO(QWidget):
                 group.create_dataset('idealized_data', data=trace.idealized_data)
             if trace.noiseless_data is not None:
                 group.create_dataset('noiseless_data', data=trace.noiseless_data)
+            if trace.mask is not None:
+                group.create_dataset('mask', data=trace.mask)
             if trace.tags:
                 group.attrs['tags'] = trace.tags
 
