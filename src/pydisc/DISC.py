@@ -509,12 +509,20 @@ class DISCO(QWidget):
     
     def load_zarr(self, filepath=''):
         if filepath == '':
-            filepath, _ = QFileDialog.getOpenFileName(self, 'Open from Zarr Zip store...', filter='Zarr Zip store (*.zip)')
-            # filepath = QFileDialog.getExistingDirectory(self, 'Open from Zarr store...')
+            storeType, ok = QInputDialog.getItem(self, 'Zarr Store Type', 'Select a Zarr store type:', ['folder', '.zip'], 0)
+            if not ok:
+                return
+            if storeType == 'folder':
+                filepath = QFileDialog.getExistingDirectory(self, 'Open from Zarr store...')
+            elif storeType == '.zip':
+                filepath, _ = QFileDialog.getOpenFileName(self, 'Open from Zarr Zip store...', filter='Zarr Zip store (*.zip)')
             if filepath == '':
                 return
+        if storeType == 'folder':
+            store = filepath
+        elif storeType == '.zip':
+            store = zarr.ZipStore(filepath, mode='r')
         traces = []
-        store = zarr.ZipStore(filepath, mode='r')
         root = zarr.open_group(store, mode='r')
         for groupname, group in root.groups():
             trace = DISC_Sequence(None)
@@ -527,14 +535,17 @@ class DISCO(QWidget):
 
     def save_zarr(self, filepath=''):
         if filepath == '':
-            filepath, _ = QFileDialog.getSaveFileName(self, 'Save to Zarr Zip store...')
+            filepath, _ = QFileDialog.getSaveFileName(self, 'Save to Zarr store...')
             if filepath == '':
                 return
-        if not filepath.endswith('.zip'):
+        if filepath.endswith('.zip'):
+            if not filepath.endswith('.zarr.zip'):
+                filepath = filepath[:-4] + '.zarr.zip'
+            store = zarr.ZipStore(filepath, mode='w')
+        else:
             if not filepath.endswith('.zarr'):
                 filepath += '.zarr'
-            filepath += '.zip'
-        store = zarr.ZipStore(filepath, mode='w')
+            store = filepath
         root = zarr.open_group(store, mode='w')
         for i, trace in enumerate(self._traces):
             group = root.create_group(f"trace.{i}")
