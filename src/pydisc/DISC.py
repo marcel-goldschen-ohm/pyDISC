@@ -15,7 +15,7 @@ import zarr
 
 from qtpy.QtCore import Qt, QSize
 from qtpy.QtGui import QColor
-from qtpy.QtWidgets import QSplitter, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QSizePolicy, QComboBox, QCheckBox, QToolBar, QToolButton, QMenu, QWidgetAction, QProgressDialog, QApplication, QPushButton, QFileDialog, QAction, QInputDialog
+from qtpy.QtWidgets import QSplitter, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QSizePolicy, QComboBox, QCheckBox, QToolBar, QToolButton, QMenu, QWidgetAction, QProgressDialog, QApplication, QPushButton, QFileDialog, QAction, QInputDialog, QLabel
 import pyqtgraph as pg
 import qtawesome as qta
 
@@ -26,6 +26,7 @@ class DISC_Sequence:
 
         # the time series trace
         self.data: np.ndarray = data
+        self.bin_factor: int = 1
 
         # metadata tags
         self.tags: str = ''
@@ -55,12 +56,14 @@ class DISC_Sequence:
         # mask array
         self.mask: np.ndarray = None
     
-    def run(self, auto: bool = False, return_intermediate_results: bool = False, verbose: bool = False):
+    def run(self, bin_factor: int = 1, auto: bool = False, return_intermediate_results: bool = False, verbose: bool = False):
         func = auto_DISC if auto else run_DISC
         if self.mask is None:
             data = self.data
         else:
             data = self.data[~self.mask]
+        if bin_factor > 1:
+            data = bin_trace(data, bin_factor)
         results = func(
             data,
             div_criterion = self.div_criterion,
@@ -84,6 +87,8 @@ class DISC_Sequence:
             idealized_data, self.idealized_metric, self.intermediate_results = results
         else:
             idealized_data, self.idealized_metric = results
+        if bin_factor > 1:
+            idealized_data = unbin_trace(idealized_data, bin_factor, len(self.data))
         if self.mask is None:
             self.idealized_data = idealized_data
         else:
@@ -91,6 +96,7 @@ class DISC_Sequence:
             self.idealized_data[:] = np.nan
             self.idealized_data[~self.mask] = idealized_data
         self.n_idealized_levels = len(np.unique(idealized_data))
+        self.bin_factor = bin_factor
     
     def add_level(self, verbose: bool = False):
         if self.idealized_data is None:
@@ -135,10 +141,15 @@ class DISC_Sequence:
         else:
             data = self.data[~self.mask]
             idealized_data = self.idealized_data[~self.mask]
+        # if self.bin_factor > 1:
+        #     data = bin_trace(data, self.bin_factor)
+        #     idealized_data = bin_trace(idealized_data, self.bin_factor)
         self.n_idealized_levels = len(np.unique(idealized_data))
         if self.n_idealized_levels < 2:
             return
         merge_nearest_levels(data, idealized_data)
+        # if self.bin_factor > 1:
+        #     idealized_data = unbin_trace(idealized_data, self.bin_factor, len(self.data))
         if self.mask is None:
             self.idealized_data = idealized_data
         else:
@@ -148,14 +159,19 @@ class DISC_Sequence:
         self.n_idealized_levels = len(np.unique(idealized_data))
         self.idealized_metric = information_criterion(data, idealized_data, self.agg_criterion)
     
-    def baum_welch_optimization(self, level_means: np.ndarray = None, level_stdevs: np.ndarray = None, optimize_level_means=False, optimize_level_stdevs=False):
+    def baum_welch_optimization(self, bin_factor: int = 1, level_means: np.ndarray = None, level_stdevs: np.ndarray = None, optimize_level_means=False, optimize_level_stdevs=False):
         if self.mask is None:
             data = self.data
             idealized_data = self.idealized_data
         else:
             data = self.data[~self.mask]
             idealized_data = self.idealized_data[~self.mask]
+        if bin_factor > 1:
+            data = bin_trace(data, self.bin_factor)
+            idealized_data = bin_trace(idealized_data, self.bin_factor)
         idealized_data, hmm = hmm_idealization_refinement(data, idealized_data, level_means, level_stdevs, optimize_level_means=optimize_level_means, optimize_level_stdevs=optimize_level_stdevs, algorithm='baum-welch')
+        if bin_factor > 1:
+            idealized_data = unbin_trace(idealized_data, self.bin_factor, len(self.data))
         if self.mask is None:
             self.idealized_data = idealized_data
         else:
@@ -165,6 +181,7 @@ class DISC_Sequence:
         if not isinstance(self.intermediate_results, dict):
             self.intermediate_results = {}
         self.intermediate_results['final_hmm'] = hmm
+        self.bin_factor = bin_factor
     
     def get_mask_str(self) -> str:
         if self.mask is None:
@@ -183,6 +200,32 @@ class DISC_Sequence:
         for rng in ranges:
             start, stop = rng.split(':')
             self.mask[int(start):int(stop)] = True
+
+ 
+def bin_trace(trace, bin_factor):
+    binned_trace = trace[::bin_factor].copy()
+    nlastbin = 1
+    for i in range(1, bin_factor):
+        tmp = trace[i::bin_factor]
+        if len(tmp) < len(binned_trace):
+            binned_trace[:len(tmp)] += tmp
+        else:
+            binned_trace += tmp
+            nlastbin += 1
+    if nlastbin == bin_factor:
+        return binned_trace / bin_factor
+    binned_trace[:-1] /= bin_factor
+    binned_trace[-1] /= nlastbin
+    return binned_trace
+
+
+def unbin_trace(binned_trace, bin_factor, trace_length=None):
+    trace = np.zeros(len(binned_trace) * bin_factor)
+    for i in range(bin_factor):
+        trace[i::bin_factor] = binned_trace
+    if trace_length is not None:
+        trace = trace[:trace_length]
+    return trace
 
 
 class DISCO(QWidget):
@@ -219,10 +262,17 @@ class DISCO(QWidget):
         self._trace_selector = QSpinBox()
         self._trace_selector.setRange(0, 0)
         self._trace_selector.setPrefix("Trace ")
-        self._trace_selector.setSuffix(" of 0")
-        self._trace_selector.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self._trace_selector.setSuffix(" of 0 ")
+        self._trace_selector.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._trace_selector.valueChanged.connect(lambda value: self.set_trace(value - 1))
         self._last_trace_index = None
+
+        # trace binning
+        self._trace_binning = QSpinBox()
+        self._trace_binning.setRange(1, 1000)
+        self._trace_binning.setValue(1)
+        self._trace_binning.valueChanged.connect(lambda value: self.replot())
+        self._trace_binning.setToolTip("Bin trace data")
 
         # buttons
         self._load_data_button = QToolButton()
@@ -240,15 +290,23 @@ class DISCO(QWidget):
         self._simulation_button.setToolTip("Simulate data")
         self._simulation_button.pressed.connect(self.simulate_data)
 
+        self._simulation_settings_button = QToolButton()
+        self._simulation_settings_button.setIcon(qta.icon('ph.gear', opacity=0.75))
+        self._simulation_settings_button.setToolTip("Simulation settings")
+
         self._idealize_button = QToolButton()
         self._idealize_button.setIcon(qta.icon('msc.run'))
         self._idealize_button.setToolTip("Run DISC on selected trace")
-        self._idealize_button.pressed.connect(self._idealize_selected_trace)
+        self._idealize_button.pressed.connect(self.idealize_selected_trace)
 
         self._idealize_all_button = QToolButton()
         self._idealize_all_button.setIcon(qta.icon('msc.run-all'))
         self._idealize_all_button.setToolTip("Run DISC on all traces")
-        self._idealize_all_button.pressed.connect(self._idealize_all_traces)
+        self._idealize_all_button.pressed.connect(self.idealize_all_traces)
+
+        self._disc_settings_button = QToolButton()
+        self._disc_settings_button.setIcon(qta.icon('ph.gear', opacity=0.75))
+        self._disc_settings_button.setToolTip("DISC idealization settings")
 
         self._add_level_button = QToolButton()
         self._add_level_button.setIcon(qta.icon('mdi.stairs-up', opacity=0.75))
@@ -270,6 +328,10 @@ class DISCO(QWidget):
         self._hmm_optimization_button.setToolTip("HMM Baum-Welch optimization of idealization")
         self._hmm_optimization_button.pressed.connect(self.baum_welch_optimization)
 
+        self._hmm_settings_button = QToolButton()
+        self._hmm_settings_button.setIcon(qta.icon('ph.gear', opacity=0.75))
+        self._hmm_settings_button.setToolTip("HMM settings")
+
         # DISC controls
         self._num_levels_edit = QLineEdit()
         self._num_levels_edit.setToolTip("Number of idealized levels")
@@ -287,7 +349,7 @@ class DISCO(QWidget):
         self._agg_criterion_selector.setToolTip("Agglomerative criterion")
 
         self._auto_criterion_toggle = QCheckBox()
-        self._auto_criterion_toggle.setChecked(False)
+        self._auto_criterion_toggle.setChecked(True)
         self._auto_criterion_toggle.setToolTip("Auto-select criterion (see Bandyopadhyay and Goldschen-Ohm, 2021)")
         self._auto_criterion_toggle.stateChanged.connect(self._on_auto_disc_toggled)
 
@@ -345,8 +407,8 @@ class DISCO(QWidget):
         action = QWidgetAction(self._disc_contols_menu)
         action.setDefaultWidget(self._disc_controls)
         self._disc_contols_menu.addAction(action)
-        self._idealize_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._idealize_button.setMenu(self._disc_contols_menu)
+        self._disc_settings_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._disc_settings_button.setMenu(self._disc_contols_menu)
 
         # simulation controls
         self.sim_n_traces_edit = QLineEdit("1")
@@ -383,8 +445,8 @@ class DISCO(QWidget):
         action = QWidgetAction(self._simulation_contols_menu)
         action.setDefaultWidget(self._simulation_controls)
         self._simulation_contols_menu.addAction(action)
-        self._simulation_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._simulation_button.setMenu(self._simulation_contols_menu)
+        self._simulation_settings_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._simulation_settings_button.setMenu(self._simulation_contols_menu)
 
         # HMM controls
         self.hmm_levels_edit = QLineEdit()
@@ -416,8 +478,8 @@ class DISCO(QWidget):
         action = QWidgetAction(self._hmm_contols_menu)
         action.setDefaultWidget(self._hmm_controls)
         self._hmm_contols_menu.addAction(action)
-        self._hmm_optimization_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-        self._hmm_optimization_button.setMenu(self._hmm_contols_menu)
+        self._hmm_settings_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._hmm_settings_button.setMenu(self._hmm_contols_menu)
 
         # mask
         self._mask_button = QToolButton()
@@ -426,7 +488,7 @@ class DISCO(QWidget):
         self._mask_button.pressed.connect(self._edit_mask_for_selected_trace)
 
         self._mask_checkbox = QCheckBox()
-        self._mask_checkbox.setChecked(True)
+        self._mask_checkbox.setChecked(False)
         self._mask_checkbox.setToolTip("Enable mask")
         self._mask_checkbox.stateChanged.connect(lambda state: self.replot())
 
@@ -450,16 +512,22 @@ class DISCO(QWidget):
         self._toolbar.addWidget(self._save_data_button)
         self._toolbar.addSeparator()
         self._toolbar.addWidget(self._simulation_button)
+        self._toolbar.addWidget(self._simulation_settings_button)
         self._toolbar.addSeparator()
         self._toolbar.addWidget(self._trace_selector)
+        self._toolbar.addWidget(QLabel("Bin:"))
+        self._toolbar.addWidget(self._trace_binning)
         self._toolbar.addSeparator()
         self._toolbar.addWidget(self._idealize_button)
         self._toolbar.addWidget(self._idealize_all_button)
+        self._toolbar.addWidget(self._disc_settings_button)
         self._toolbar.addSeparator()
         self._toolbar.addWidget(self._add_level_button)
         self._toolbar.addWidget(self._remove_level_button)
         self._toolbar.addWidget(self._merge_nearest_levels_button)
+        self._toolbar.addSeparator()
         self._toolbar.addWidget(self._hmm_optimization_button)
+        self._toolbar.addWidget(self._hmm_settings_button)
         self._toolbar.addSeparator()
         self._toolbar.addWidget(self._mask_checkbox)
         self._toolbar.addWidget(self._mask_button)
@@ -473,6 +541,8 @@ class DISCO(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._trace_plot)
         splitter.addWidget(self._criterion_plot)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
 
         vbox = QVBoxLayout(self)
         vbox.setContentsMargins(0, 0, 0, 0)
@@ -497,7 +567,7 @@ class DISCO(QWidget):
         self._traces = traces
         self._trace_selector.setRange(1, len(traces))
         self._trace_selector.setValue(1)
-        self._trace_selector.setSuffix(f" of {len(traces)}")
+        self._trace_selector.setSuffix(f" of {len(traces)} ")
         self.replot()
     
     def _side_by_side_button_layout(self, *buttons):
@@ -614,6 +684,7 @@ class DISCO(QWidget):
         else:
             traces = [self._traces[i] for i in trace_indices]
         n_traces = len(traces)
+        bin_factor = self._trace_binning.value()
 
         progress = QProgressDialog(f"Idealizing {n_traces} trace(s)...", None, 0, n_traces, self)
         progress.show()
@@ -643,7 +714,7 @@ class DISCO(QWidget):
                 trace.div_criterion = self._div_criterion_selector.currentText()
                 trace.agg_criterion = self._agg_criterion_selector.currentText()
             
-            trace.run(auto=auto, return_intermediate_results=True, verbose=verbose)
+            trace.run(bin_factor=bin_factor, auto=auto, return_intermediate_results=True, verbose=verbose)
         
             # only keep some of the intermediate results
             trace.intermediate_results = {
@@ -654,10 +725,10 @@ class DISCO(QWidget):
         self.replot()
         progress.close()
     
-    def _idealize_selected_trace(self):
+    def idealize_selected_trace(self):
         self.idealize_data("selected")
     
-    def _idealize_all_traces(self):
+    def idealize_all_traces(self):
         self.idealize_data("all")
     
     def add_level(self):
@@ -708,6 +779,7 @@ class DISCO(QWidget):
         if not self._traces:
             return
         trace = self._traces[self._trace_selector.value() - 1]
+        bin_factor = self._trace_binning.value()
         
         try:
             level_means = self.hmm_levels_edit.text().lstrip("[").rstrip("]")
@@ -728,7 +800,7 @@ class DISCO(QWidget):
         progress.show()
         QApplication.processEvents()
 
-        trace.baum_welch_optimization(level_means=level_means, level_stdevs=level_stdevs, optimize_level_means=optimize_level_means, optimize_level_stdevs=optimize_level_stdevs)
+        trace.baum_welch_optimization(bin_factor=bin_factor, level_means=level_means, level_stdevs=level_stdevs, optimize_level_means=optimize_level_means, optimize_level_stdevs=optimize_level_stdevs)
 
         self.replot()
 
@@ -792,13 +864,15 @@ class DISCO(QWidget):
         
         trace_index = self._trace_selector.value() - 1
         trace = self._traces[trace_index]
+        bin_factor = self._trace_binning.value()
         
-        if trace.data is not None:
-            if trace.mask is None or not self._mask_checkbox.isChecked():
-                data = trace.data
-            else:
+        data = trace.data
+        if data is not None:
+            if (trace.mask is not None) and self._mask_checkbox.isChecked():
                 data = trace.data.copy()
                 data[trace.mask] = np.nan
+            if bin_factor > 1:
+                data = bin_trace(data, bin_factor)
             self._trace_plot.plot(data, pen=pg.mkPen(QColor.fromRgb(0, 114, 189), width=1))
         
         # # for debugging
@@ -807,8 +881,11 @@ class DISCO(QWidget):
         #     if div_idealized_data is not None:
         #         self._trace_plot.plot(div_idealized_data, pen=pg.mkPen(QColor.fromRgb(0, 155, 255), width=1))
         
-        if trace.idealized_data is not None:
-            self._trace_plot.plot(trace.idealized_data, pen=pg.mkPen(QColor.fromRgb(217,  83,  25), width=2))
+        idealized_data = trace.idealized_data
+        if idealized_data is not None:
+            if bin_factor > 1:
+                idealized_data = bin_trace(idealized_data, bin_factor)
+            self._trace_plot.plot(idealized_data, pen=pg.mkPen(QColor.fromRgb(217,  83,  25), width=2))
         
         if isinstance(trace.intermediate_results, dict):
             agg_levels = trace.intermediate_results.get('agg_levels', None)
@@ -828,8 +905,8 @@ class DISCO(QWidget):
         else:
             self._criterion_plot.getAxis('left').setLabel('Criterion')
         
-        if (trace.idealized_data is not None) and (trace.idealized_metric is not None):
-            n_idealized_levels = len(np.unique(trace.idealized_data[~np.isnan(trace.idealized_data)]))
+        if (idealized_data is not None) and (trace.idealized_metric is not None):
+            n_idealized_levels = len(np.unique(idealized_data[~np.isnan(idealized_data)]))
             color = QColor.fromRgb(217,  83,  25)
             self._criterion_plot.plot([n_idealized_levels], [trace.idealized_metric], pen=pg.mkPen(color, width=1), symbol='o', symbolPen=pg.mkPen(color, width=1), symbolBrush=color)
         
