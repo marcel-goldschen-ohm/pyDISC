@@ -16,6 +16,7 @@ dependencies = [
     "qtawesome",
     "pyqtgraph-ext>=1.2.6",
     "zarr",
+    "qtconsole>=5.5.2",
 ]
 readme = "README.md"
 keywords = ["time series", "idealization", "DISC", "PyQt", "PySide"]

@@ -13,11 +13,14 @@ import torch
 import time
 import zarr
 
-from qtpy.QtCore import Qt, QSize
+from qtpy.QtCore import Qt, QSize, QTimer
 from qtpy.QtGui import QColor
 from qtpy.QtWidgets import QSplitter, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QSizePolicy, QComboBox, QCheckBox, QToolBar, QToolButton, QMenu, QWidgetAction, QProgressDialog, QApplication, QPushButton, QFileDialog, QAction, QInputDialog, QLabel
 import pyqtgraph as pg
 import qtawesome as qta
+
+from qtconsole.rich_jupyter_widget import RichJupyterWidget
+from qtconsole.inprocess import QtInProcessKernelManager
 
 
 class DISC_Sequence:
@@ -506,6 +509,18 @@ class DISCO(QWidget):
         self._tags_filter_edit.setToolTip("Tags filter (any of comma-separated)")
         self._tags_filter_edit.textEdited.connect(self._on_tags_filter_edited)
 
+        # console
+        self._console_kernel_manager = QtInProcessKernelManager()
+        self._console_kernel_manager.start_kernel(show_banner=False)
+        self._console_kernel_client = self._console_kernel_manager.client()
+        self._console_kernel_client.start_channels()
+        self._console = RichJupyterWidget()
+        self._console.kernel_manager = self._console_kernel_manager
+        self._console.kernel_client = self._console_kernel_client
+        self._console_kernel_manager.kernel.shell.push({'self': self})
+        self._console.executed.connect(self.replot)
+        QTimer.singleShot(1000, self._init_console_message)
+
         # layout
         self._toolbar = QToolBar(orientation=Qt.Orientation.Horizontal)
         self._toolbar.addWidget(self._load_data_button)
@@ -538,17 +553,26 @@ class DISCO(QWidget):
         self._toolbar.addWidget(self._tags_filter_edit)
         self._toolbar.setIconSize(QSize(24, 24))
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self._trace_plot)
-        splitter.addWidget(self._criterion_plot)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
+        hsplitter = QSplitter(Qt.Orientation.Horizontal)
+        hsplitter.addWidget(self._trace_plot)
+        hsplitter.addWidget(self._criterion_plot)
+        hsplitter.setStretchFactor(0, 3)
+        hsplitter.setStretchFactor(1, 1)
+
+        vsplitter = QSplitter(Qt.Orientation.Vertical)
+        vsplitter.addWidget(hsplitter)
+        vsplitter.addWidget(self._console)
+        vsplitter.setStretchFactor(0, 3)
+        vsplitter.setStretchFactor(1, 1)
 
         vbox = QVBoxLayout(self)
         vbox.setContentsMargins(0, 0, 0, 0)
         vbox.setSpacing(0)
         vbox.addWidget(self._toolbar)
-        vbox.addWidget(splitter)
+        vbox.addWidget(vsplitter)
+    
+    def __del__(self):
+        self._shutdown_console()
     
     @property
     def data(self):
@@ -569,6 +593,18 @@ class DISCO(QWidget):
         self._trace_selector.setValue(1)
         self._trace_selector.setSuffix(f" of {len(traces)} ")
         self.replot()
+    
+    def _shutdown_console(self) -> None:
+        self._console_kernel_client.stop_channels()
+        self._console_kernel_manager.shutdown_kernel()
+    
+    def _init_console_message(self) -> None:
+        self._console._append_plain_text('-----------------------------------------\n', before_prompt=True)
+        self._console._append_plain_text('self => This instance of pyDISC\n', before_prompt=True)
+        self._console._append_plain_text('self.data => list[DISC_Sequence] \n', before_prompt=True)
+        self._console._append_plain_text('self.data[0].data => First data trace \n', before_prompt=True)
+        self._console._append_plain_text('self.data[0].idealized_data => Idealization of first data trace \n', before_prompt=True)
+        self._console._append_plain_text('-----------------------------------------\n', before_prompt=True)
     
     def _side_by_side_button_layout(self, *buttons):
         hbox = QHBoxLayout()
