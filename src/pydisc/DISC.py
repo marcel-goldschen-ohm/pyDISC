@@ -619,13 +619,11 @@ class DISCO(QWidget):
         root = zarr.open_group(store, mode='w')
         for i, trace in enumerate(self._traces):
             group = root.create_group(f"trace.{i}")
-            group.create_dataset('data', data=trace.data)
-            if trace.idealized_data is not None:
-                group.create_dataset('idealized_data', data=trace.idealized_data)
-            if trace.noiseless_data is not None:
-                group.create_dataset('noiseless_data', data=trace.noiseless_data)
-            if trace.mask is not None:
-                group.create_dataset('mask', data=trace.mask)
+            for dataset in ['data', 'idealized_data', 'noiseless_data', 'mask']:
+                data = getattr(trace, dataset, None)
+                if data is not None:
+                    data = np.asarray(data)
+                    group.create_dataset(dataset, data=data, shape=data.shape, dtype=data.dtype)
             if trace.tags:
                 group.attrs['tags'] = trace.tags
 
