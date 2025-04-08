@@ -13,10 +13,10 @@ dependencies = [
     "scikit-learn",
     "pomegranate>=1.1.1",
     "qtpy",
-    "qtawesome",
-    "pyqtgraph-ext>=1.2.6",
+    "qtawesome>=1.3.0",
     "zarr",
     "qtconsole>=5.5.2",
+    "pyqtgraph-ext@git+https://github.com/marcel-goldschen-ohm/pyqtgraph-ext@v2025.4.8"
 ]
 readme = "README.md"
 keywords = ["time series", "idealization", "DISC", "PyQt", "PySide"]

@@ -13,11 +13,12 @@ import torch
 import time
 import zarr
 
-from qtpy.QtCore import Qt, QSize, QTimer
-from qtpy.QtGui import QColor
-from qtpy.QtWidgets import QSplitter, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QSizePolicy, QComboBox, QCheckBox, QToolBar, QToolButton, QMenu, QWidgetAction, QProgressDialog, QApplication, QPushButton, QFileDialog, QAction, QInputDialog, QLabel
-import pyqtgraph as pg
+from qtpy.QtCore import *
+from qtpy.QtGui import *
+from qtpy.QtWidgets import *
 import qtawesome as qta
+import pyqtgraph as pg
+import pyqtgraph_ext as pgx
 
 from qtconsole.rich_jupyter_widget import RichJupyterWidget
 from qtconsole.inprocess import QtInProcessKernelManager
@@ -223,7 +224,7 @@ def bin_trace(trace, bin_factor):
 
 
 def unbin_trace(binned_trace, bin_factor, trace_length=None):
-    trace = np.zeros(len(binned_trace) * bin_factor)
+    trace = np.zeros(len(binned_trace) * bin_factor, dtype=binned_trace.dtype)
     for i in range(bin_factor):
         trace[i::bin_factor] = binned_trace
     if trace_length is not None:
@@ -240,23 +241,23 @@ class DISCO(QWidget):
         self._traces: list[DISC_Sequence] = []
 
         # plots
-        self._trace_plot = pg.PlotWidget(
+        self._trace_plot = pgx.Figure(
             pen=pg.mkPen(QColor.fromRgbF(0.15, 0.15, 0.15), width=1)
         )
-        for axis in ['left', 'bottom', 'right', 'top']:
-            axis_item = self._trace_plot.getAxis(axis)
-            if axis_item is not None:
-                axis_item.setTextPen(QColor.fromRgbF(0.15, 0.15, 0.15))
-        self._trace_plot.setBackground(QColor(240, 240, 240))
+        # for axis in ['left', 'bottom', 'right', 'top']:
+        #     axis_item = self._trace_plot.getAxis(axis)
+        #     if axis_item is not None:
+        #         axis_item.setTextPen(QColor.fromRgbF(0.15, 0.15, 0.15))
+        # self._trace_plot.setBackground(QColor(240, 240, 240))
 
-        self._criterion_plot = pg.PlotWidget(
+        self._criterion_plot = pgx.Figure(
             pen=pg.mkPen(QColor.fromRgbF(0.15, 0.15, 0.15), width=1)
         )
-        for axis in ['left', 'bottom', 'right', 'top']:
-            axis_item = self._criterion_plot.getAxis(axis)
-            if axis_item is not None:
-                axis_item.setTextPen(QColor.fromRgbF(0.15, 0.15, 0.15))
-        self._criterion_plot.setBackground(QColor(240, 240, 240))
+        # for axis in ['left', 'bottom', 'right', 'top']:
+        #     axis_item = self._criterion_plot.getAxis(axis)
+        #     if axis_item is not None:
+        #         axis_item.setTextPen(QColor.fromRgbF(0.15, 0.15, 0.15))
+        # self._criterion_plot.setBackground(QColor(240, 240, 240))
         self._criterion_plot.getAxis('left').setLabel('Criterion')
         self._criterion_plot.getAxis('bottom').setLabel('# Levels')
         self._criterion_plot.getAxis('bottom').setTickSpacing(5, 1)
@@ -279,12 +280,12 @@ class DISCO(QWidget):
 
         # buttons
         self._load_data_button = QToolButton()
-        self._load_data_button.setIcon(qta.icon('fa.folder-open', opacity=0.75))
+        self._load_data_button.setIcon(qta.icon('fa5.folder-open', opacity=0.75))
         self._load_data_button.setToolTip("Load data from Zarr store")
         self._load_data_button.pressed.connect(self.load_zarr)
 
         self._save_data_button = QToolButton()
-        self._save_data_button.setIcon(qta.icon('fa.save', opacity=0.75))
+        self._save_data_button.setIcon(qta.icon('fa5.save', opacity=0.75))
         self._save_data_button.setToolTip("Save data to Zarr store")
         self._save_data_button.pressed.connect(self.save_zarr)
 
@@ -484,6 +485,14 @@ class DISCO(QWidget):
         self._hmm_settings_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._hmm_settings_button.setMenu(self._hmm_contols_menu)
 
+        # # selection
+        # self._select_data_button = QToolButton()
+        # self._select_data_button.setIcon(qta.icon('mdi.pencil', opacity=0.75))
+        # self._select_data_button.setToolTip("Select data points")
+        # # self._select_data_button.setCheckable(True)
+        # # self._select_data_button.setChecked(False)
+        # self._select_data_button.pressed.connect(self._start_selecting_points)
+
         # mask
         self._mask_button = QToolButton()
         self._mask_button.setIcon(qta.icon('fa5s.mask', opacity=0.75))
@@ -497,7 +506,7 @@ class DISCO(QWidget):
 
         # tags
         self._tags_icon_action = QAction()
-        self._tags_icon_action.setIcon(qta.icon('fa.tag', opacity=0.75))
+        self._tags_icon_action.setIcon(qta.icon('fa5s.tag', opacity=0.75))
         self._tags_icon_action.setToolTip("Tags (comma-separated)")
         self._tags_edit = QLineEdit()
         self._tags_edit.setToolTip("Tags (comma-separated)")
@@ -543,6 +552,8 @@ class DISCO(QWidget):
         self._toolbar.addSeparator()
         self._toolbar.addWidget(self._hmm_optimization_button)
         self._toolbar.addWidget(self._hmm_settings_button)
+        # self._toolbar.addSeparator()
+        # self._toolbar.addWidget(self._select_data_button)
         self._toolbar.addSeparator()
         self._toolbar.addWidget(self._mask_checkbox)
         self._toolbar.addWidget(self._mask_button)
@@ -908,6 +919,12 @@ class DISCO(QWidget):
             if bin_factor > 1:
                 data = bin_trace(data, bin_factor)
             self._trace_plot.plot(data, pen=pg.mkPen(QColor.fromRgb(0, 114, 189), width=1))
+            if (trace.mask is not None) and not self._mask_checkbox.isChecked():
+                data = trace.data.copy()
+                data[~trace.mask] = np.nan
+                if bin_factor > 1:
+                    data = bin_trace(data, bin_factor)
+                self._trace_plot.plot(data, pen=pg.mkPen(QColor.fromRgb(200, 200, 200), width=1))
         
         # # for debugging
         # if isinstance(trace.intermediate_results, dict):
@@ -991,6 +1008,77 @@ class DISCO(QWidget):
 
     def _is_tags_filter_enabled(self) -> bool:
         return self._tags_filter_edit.text().strip() != ""
+    
+    def _start_selecting_points(self):
+        self._trace_plot.getViewBox().sigItemAdded.connect(self._on_item_added_to_axes)
+        self._trace_plot.getViewBox().startDrawingItemsOfType(pg.RectROI)
+
+    def _stop_selecting_points(self):
+        self._trace_plot.getViewBox().stopDrawingItems()
+        self._trace_plot.getViewBox().sigItemAdded.disconnect(self._on_item_added_to_axes)
+
+    @Slot(QGraphicsObject)
+    def _on_item_added_to_axes(self, item: QGraphicsObject) -> None:
+        view: pgx.View = self.sender()
+        # plot: pgx.Plot = view.parentItem()
+        if isinstance(item, pg.RectROI):
+            # select data points in ROI
+            x, y = item.pos()
+            w, h = item.size()
+            xlim = sorted([int(x), int(x + w)])
+            ylim = sorted([y, y + h])
+        
+            trace_index = self._trace_selector.value() - 1
+            trace = self._traces[trace_index]
+            bin_factor = self._trace_binning.value()
+            if bin_factor == 1:
+                data = trace.data
+            else:
+                data = bin_trace(trace.data, bin_factor)
+            mask = np.full(data.shape, False)
+            xi = np.arange(max(0, xlim[0]), min(xlim[1] + 1, len(data)))
+            yi = np.where((data[xi] >= ylim[0]) & (data[xi] <= ylim[1]))[0]
+            mask[xi[yi]] = True
+            if bin_factor > 1:
+                mask = unbin_trace(mask, bin_factor, len(trace.data))
+            if self._mask_mode == 'mask':
+                if trace.mask is None:
+                    trace.mask = mask
+                else:
+                    trace.mask |= mask
+            elif self._mask_mode == 'unmask':
+                if trace.mask is None:
+                    pass
+                else:
+                    trace.mask[mask] = False
+            
+            # remove ROI
+            view.removeItem(item)
+            item.deleteLater()
+            
+            # stop drawing ROIs
+            self._stop_selecting_points()
+
+            # update plot
+            self.replot()
+    
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key.Key_M:
+            self._mask_mode = 'mask'
+            self._start_selecting_points()
+            return
+        elif event.key() == Qt.Key.Key_U:
+            self._mask_mode = 'unmask'
+            self._start_selecting_points()
+            return
+        elif event.key() == Qt.Key.Key_C:
+            trace_index = self._trace_selector.value() - 1
+            trace = self._traces[trace_index]
+            trace.idealized_data = None
+            self.replot()
+            return
+        super().keyPressEvent(event)
+
 
 
 class SegmentationTreeNode:
